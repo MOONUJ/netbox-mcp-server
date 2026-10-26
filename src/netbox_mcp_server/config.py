@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     )
     """Optional bearer token protecting the HTTP transport endpoint (treated as secret)"""
 
+    # ===== Write Settings =====
+    netbox_enable_write: bool = False
+    netbox_enable_delete: bool = False
+    netbox_write_allowed_object_types: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_write_settings(self) -> "Settings":
+        """Require explicit write enablement and authentication for HTTP writes."""
+        if self.netbox_enable_delete and not self.netbox_enable_write:
+            raise ValueError("NETBOX_ENABLE_DELETE requires NETBOX_ENABLE_WRITE")
+        if self.netbox_enable_write and self.transport == "http" and not self.mcp_auth_token:
+            raise ValueError("HTTP writes require MCP_AUTH_TOKEN")
+        return self
+
     # ===== Plugin Discovery Settings =====
     enable_plugin_discovery: bool = False
     """Whether to auto-discover plugin object types from NetBox at startup"""
@@ -138,6 +152,9 @@ class Settings(BaseSettings):
             "verify_ssl": self.verify_ssl,
             "enable_plugin_discovery": self.enable_plugin_discovery,
             "log_level": self.log_level,
+            "netbox_enable_write": self.netbox_enable_write,
+            "netbox_enable_delete": self.netbox_enable_delete,
+            "netbox_write_allowed_object_types": self.netbox_write_allowed_object_types,
         }
         if self.transport == "http":
             summary.update(

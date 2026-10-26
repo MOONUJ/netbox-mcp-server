@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "netbox-mcp-server"
 version = "1.2.2"
-description = "A read-only MCP server for NetBox"
+description = "A read-only-by-default MCP server for NetBox with optional single-object writes"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [

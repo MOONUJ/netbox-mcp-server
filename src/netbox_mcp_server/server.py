@@ -16,6 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from netbox_mcp_server.config import Settings, configure_logging
 from netbox_mcp_server.netbox_client import NetBoxRestClient
 from netbox_mcp_server.netbox_types import NETBOX_OBJECT_TYPES
+from netbox_mcp_server.write_tools import register_write_tools
 
 
 def parse_cli_args() -> dict[str, Any]:
@@ -98,6 +99,19 @@ def parse_cli_args() -> dict[str, Any]:
         help="Auto-discover plugin object types from NetBox at startup",
     )
 
+    for flag in ("netbox-enable-write", "netbox-enable-delete"):
+        parser.add_argument(
+            f"--{flag}",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Enable optional writes/deletion (default: disabled)",
+        )
+    parser.add_argument(
+        "--netbox-write-allowed-object-types",
+        nargs="*",
+        help="Exact object types allowed for writes; empty list denies all writes",
+    )
+
     # Observability settings
     parser.add_argument(
         "--log-level",
@@ -129,6 +143,14 @@ def parse_cli_args() -> dict[str, Any]:
         overlay["enable_plugin_discovery"] = args.enable_plugin_discovery
     if args.log_level is not None:
         overlay["log_level"] = args.log_level
+
+    for name in (
+        "netbox_enable_write",
+        "netbox_enable_delete",
+        "netbox_write_allowed_object_types",
+    ):
+        if getattr(args, name) is not None:
+            overlay[name] = getattr(args, name)
 
     return overlay
 
@@ -780,6 +802,8 @@ def main() -> None:
         if plugin_types:
             NETBOX_OBJECT_TYPES.update(plugin_types)
             asyncio.run(_update_tool_descriptions())
+
+    register_write_tools(mcp, netbox, settings, NETBOX_OBJECT_TYPES)
 
     try:
         if settings.transport == "stdio":

@@ -7,9 +7,9 @@
 > - Docker users: rebuild images with updated CMD
 > - See [CHANGELOG.md](CHANGELOG.md) for full details
 
-This is a simple read-only [Model Context Protocol](https://modelcontextprotocol.io/) server for NetBox. It enables you to interact with your data in NetBox directly via LLMs that support MCP.
+This fork provides a read-only-by-default [Model Context Protocol](https://modelcontextprotocol.io/) server for NetBox. It enables you to interact with your data in NetBox directly via LLMs that support MCP.
 
-The server is intentionally simple: easy to get started with, hard to misuse (read-only by default, no plugin surface), and easy to fork and adapt. Forking under Apache 2.0 is a first-class path for users who need capabilities beyond the project's scope.
+This fork adds opt-in single-object create, update, and delete tools. Existing read tools remain available with the default configuration.
 
 ## Community
 
@@ -22,6 +22,9 @@ For chat, use cases, and general MCP discussion, join the NetBox community at [n
 | get_objects | Retrieves NetBox core objects based on their type and filters |
 | get_object_by_id | Gets detailed information about a specific NetBox object by its ID |
 | get_changelogs | Retrieves change history records (audit trail) based on filters |
+| netbox_create_object | Creates one object (requires write enablement and a non-empty allowlist) |
+| netbox_update_object | Patches one object by ID (requires write enablement and a non-empty allowlist) |
+| netbox_delete_object | Deletes one object by ID (also requires delete enablement) |
 
 > Note: Core NetBox object types are always available. Plugin object types can be auto-discovered. See [Plugin Object Type Discovery](#plugin-object-type-discovery). Advanced features (GraphQL, dynamic model discovery, etc.) are deliberately out of scope. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full scope statement and rationale.
 
@@ -155,6 +158,73 @@ devices = netbox_get_objects(
 
 The `fields` parameter uses NetBox's native field filtering. See the [NetBox API documentation](https://docs.netbox.dev/en/stable/integrations/rest-api/) for details.
 
+## Optional Create, Update, and Delete
+
+Writing is disabled by default. To enable it, use a NetBox token authorized to
+create/change the selected models (and delete them if needed), and configure an
+explicit allowlist. NetBox permissions remain authoritative.
+
+```env
+NETBOX_ENABLE_WRITE=true
+NETBOX_ENABLE_DELETE=false
+NETBOX_WRITE_ALLOWED_OBJECT_TYPES='["dcim.site","dcim.device","dcim.interface","ipam.ipaddress","ipam.prefix"]'
+# Required when TRANSPORT=http and writes are enabled:
+# MCP_AUTH_TOKEN=your-strong-mcp-secret
+```
+
+An empty allowlist denies all writes and hides all write tools. Deletion requires
+both enable flags. Plugin discovery does not grant write permission: a plugin
+type must be discovered and explicitly allowlisted. Registering a type for reads
+does not mean its NetBox endpoint supports writes.
+
+CLI equivalents (CLI values override environment variables):
+
+```bash
+uv run netbox-mcp-server --netbox-enable-write \
+  --netbox-write-allowed-object-types dcim.site dcim.device
+# Add --netbox-enable-delete to expose deletion.
+# --no-netbox-enable-write / --no-netbox-enable-delete disable each flag.
+# --netbox-write-allowed-object-types with no values clears the allowlist.
+```
+
+Example MCP tool arguments:
+
+```python
+netbox_create_object(
+    object_type="dcim.site",
+    data={"name": "MCP Lab", "slug": "mcp-lab"},
+)
+# Use the actual ID returned by creation:
+netbox_update_object(
+    object_type="dcim.site", object_id=123,
+    data={"description": "Managed through MCP"},
+)
+netbox_delete_object(object_type="dcim.site", object_id=123)
+```
+
+Use read tools to resolve related objects to numeric IDs. Updates use PATCH:
+omitted fields stay unchanged, explicit null values are sent, and lists may
+replace existing lists. Required fields and choices depend on the deployed
+NetBox version; field validation errors are returned to the caller.
+
+Deletion is permanent and may cascade to related objects or be blocked by
+NetBox constraints. Inspect the target before deleting. These tools do not
+provide undo, bulk operations, or automatic retries. A communication failure
+can leave the result unknown: inspect NetBox before retrying, especially after
+creation, to avoid duplicate objects.
+
+For HTTP writes, this fork requires MCP_AUTH_TOKEN at startup. Deploy with TLS
+when accessed over a network. All callers share the configured NetBox identity;
+the MCP bearer token does not provide per-user NetBox permissions.
+
+### Development instance verification
+
+Using a disposable NetBox instance and an allowlisted dcim.site model:
+create a uniquely named site, retain the returned ID, patch its description,
+verify it with netbox_get_object_by_id, delete that ID, and verify it is absent.
+Use a token with view/add/change/delete permissions for sites. This verifies the
+deployed NetBox version and permission setup beyond the mocked automated tests.
+
 ## Configuration
 
 The server supports multiple configuration sources with the following precedence (highest to lowest):
@@ -170,6 +240,9 @@ The server supports multiple configuration sources with the following precedence
 |---------|------|---------|----------|-------------|
 | `NETBOX_URL` | URL | - | Yes | Base URL of your NetBox instance (e.g., https://netbox.example.com/) |
 | `NETBOX_TOKEN` | String | - | Yes | API token for authentication |
+| `NETBOX_ENABLE_WRITE` | Boolean | `false` | No | Enable single-object creation and updates |
+| `NETBOX_ENABLE_DELETE` | Boolean | `false` | No | Enable deletion; requires writes |
+| `NETBOX_WRITE_ALLOWED_OBJECT_TYPES` | JSON string array | `[]` | No | Exact types allowed for writes; empty denies all |
 | `TRANSPORT` | `stdio` \| `http` | `stdio` | No | MCP transport protocol |
 | `HOST` | String | `127.0.0.1` | If HTTP | Host address for HTTP server |
 | `PORT` | Integer | `8000` | If HTTP | Port for HTTP server |
